@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saathi Prototype</title>
+<style>
+  :root {
+    --bg: #eef3f8; --card: #ffffff; --ink: #0b1f33; --muted: #5b6b7c;
+    --brand: #00b9f1; --brand-dark: #002e6e; --bot: #f1f6fb; --warn: #fff4e0; --ok: #e6f7ee;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  .app { max-width: 440px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; background: var(--card); }
+  header { background: var(--brand-dark); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+  header .logo { width: 36px; height: 36px; border-radius: 50%; background: var(--brand); display: grid; place-items: center; font-weight: 700; }
+  header h1 { font-size: 17px; margin: 0; }
+  header p { font-size: 12px; margin: 0; opacity: .8; }
+  header select { margin-left: auto; border-radius: 8px; border: 0; padding: 4px 6px; }
+  .journeys { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #e3e9ef; }
+  .journeys button { flex: 1; border: 1px solid var(--brand); background: #fff; color: var(--brand-dark); border-radius: 12px; padding: 8px 4px; font-weight: 600; cursor: pointer; }
+  .journeys button.active { background: var(--brand); color: #fff; }
+  .steps { display: flex; justify-content: space-between; padding: 8px 14px; font-size: 11px; color: var(--muted); }
+  .steps span.on { color: var(--brand-dark); font-weight: 700; }
+  #chat { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 85%; padding: 10px 12px; border-radius: 14px; line-height: 1.4; font-size: 14px; white-space: pre-line; }
+  .bot { background: var(--bot); align-self: flex-start; border-bottom-left-radius: 4px; }
+  .user { background: var(--brand); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.warn { background: var(--warn); }
+  .msg.ok { background: var(--ok); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; }
+  .chips button { border: 1px solid var(--brand); background: #fff; color: var(--brand-dark); border-radius: 16px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  .speak { border: 0; background: none; cursor: pointer; font-size: 13px; color: var(--brand-dark); padding: 4px 0 0; }
+  form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid #e3e9ef; }
+  form input { flex: 1; padding: 10px 12px; border-radius: 20px; border: 1px solid #cdd7e1; font-size: 14px; }
+  form button { border: 0; border-radius: 20px; padding: 0 14px; background: var(--brand-dark); color: #fff; cursor: pointer; }
+  #mic.listening { background: #d93025; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">S</div>
+    <div><h1>Saathi</h1><p>Your money companion</p></div>
+    <select id="lang" aria-label="Language">
+      <option value="en">English</option>
+      <option value="hi">हिन्दी</option>
+    </select>
+  </header>
+  <div class="journeys">
+    <button data-j="lend">Lend</button>
+    <button data-j="insure">Insure</button>
+    <button data-j="pay">Pay</button>
+  </div>
+  <div class="steps" id="steps"></div>
+  <div id="chat" aria-live="polite"></div>
+  <form id="form">
+    <input id="input" placeholder="Ask anything, e.g. what is APR?" autocomplete="off">
+    <button type="button" id="mic" title="Speak">🎤</button>
+    <button type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+const STEPS = ["Ask", "Understand", "Share", "Pre-check", "Finish"];
+
+// Mock data standing in for partner APIs, KFS documents and the rejection-risk model.
+const T = {
+  en: {
+    hello: "Namaste! I'm Saathi. I help with loans, insurance and payments in plain words. Pick a journey or ask me a question.",
+    lend: {
+      ask: "How much do you need, and for what?",
+      choices: ["₹50,000 for a bike", "₹2 lakh for my shop"],
+      understand: amt => `Best match for ${amt}: Paytm Personal Loan via partner NBFC.\n\nKey Fact Statement in plain words:\n• Interest: 16% a year (APR incl. fees: 17.4%)\n• EMI: about ₹4,540/month for 12 months\n• Processing fee: ₹999 + GST, taken from the loan\n• Late payment: ₹500 + 2% a month on the missed EMI\n• You can cancel within 3 days (cooling-off) with no penalty.`,
+      share: "To apply, I need your PAN and consent to fetch bank statements via Account Aggregator. Share them?",
+      shareChoices: ["Yes, share with consent", "Not now"],
+      precheck: "Pre-check found 1 issue before sending:\n⚠ Name on PAN is \"KAVYA SHRI K R\" but bank account says \"KAVYASHRI K R\". Lenders often reject this.\n\nFix: I'll attach a name-declaration so it goes through.",
+      precheckChoices: ["Fix and submit"],
+      finish: "✅ Application sent with no pre-check issues. Expected decision: 10 minutes.\nI'll remind you 3 days before every EMI."
+    },
+    insure: {
+      ask: "What do you want to protect?",
+      choices: ["Health for my family", "My bike"],
+      understand: () => `Comparing 2 family health plans (₹5 lakh cover):\n\nPlan A — ₹9,800/yr\n• Waiting period for existing illness: 3 years\n• Room rent cap: 1% of cover/day\n\nPlan B — ₹11,200/yr\n• Waiting period: 1 year\n• No room rent cap\n\n⚠ Exclusion to know upfront: neither covers maternity in year one.`,
+      share: "Shall I fetch your details from DigiLocker so you don't type them again?",
+      shareChoices: ["Yes, use DigiLocker", "Not now"],
+      precheck: "Pre-check: your father has diabetes. Declaring it now avoids claim rejection later. I've added it to the form.",
+      precheckChoices: ["Looks good, buy Plan B"],
+      finish: "✅ Policy issued. If you ever need to claim, just say \"claim\" and I'll guide you step by step."
+    },
+    pay: {
+      ask: "What would you like to do?",
+      choices: ["Set up EMI AutoPay", "My payment failed"],
+      understand: c => c.includes("failed")
+        ? "I see a failed UPI payment of ₹1,250 to Sharma Stores on 27 Oct. Money was debited but not received.\nBanks must auto-reverse within T+1 days. It's been 2 days, so we can raise a dispute."
+        : "AutoPay will debit your EMI of ₹4,540 on the 5th of each month from your linked bank. You can pause or cancel it anytime.",
+      share: "Confirm with your UPI PIN on the next screen (simulated).",
+      shareChoices: ["Confirm"],
+      precheck: "Pre-check: your balance is usually low around the 5th. Move the date to the 7th, after your salary?",
+      precheckChoices: ["Yes, use the 7th", "Keep the 5th"],
+      finish: "✅ Done. I'll nudge you 2 days before every debit."
+    },
+    glossary: {
+      apr: "APR is the total yearly cost of a loan, including interest and fees. Compare APRs, not just interest rates.",
+      kfs: "KFS (Key Fact Statement) is a one-page summary every lender must give you: rate, fees, EMI, penalties.",
+      emi: "EMI is the fixed amount you pay every month until the loan is repaid.",
+      "waiting period": "A waiting period is the time after buying a policy during which some illnesses are not covered.",
+      exclusion: "An exclusion is something the policy will never pay for. Always read these before buying."
+    },
+    fallback: "I'm a prototype, so I know a few terms (APR, KFS, EMI, waiting period, exclusion). Or pick a journey above.",
+    notNow: "No problem. Your progress is saved — come back anytime.",
+    listen: "🔊 Listen"
+  },
+  hi: {
+    hello: "नमस्ते! मैं साथी हूँ। लोन, बीमा और पेमेंट आसान शब्दों में समझाता हूँ। कोई सफ़र चुनें या सवाल पूछें।",
+    lend: {
+      ask: "कितने पैसे चाहिए, और किसलिए?",
+      choices: ["₹50,000 बाइक के लिए", "₹2 लाख दुकान के लिए"],
+      understand: amt => `${amt} के लिए सबसे अच्छा: पार्टनर NBFC से Paytm पर्सनल लोन।\n\nKFS आसान शब्दों में:\n• ब्याज: 16% सालाना (फ़ीस मिलाकर APR: 17.4%)\n• EMI: लगभग ₹4,540/महीना, 12 महीने\n• प्रोसेसिंग फ़ीस: ₹999 + GST\n• देर से भरने पर: ₹500 + 2% महीना\n• 3 दिन में बिना जुर्माने रद्द कर सकते हैं।`,
+      share: "आवेदन के लिए PAN और Account Aggregator से बैंक स्टेटमेंट लेने की सहमति चाहिए। शेयर करें?",
+      shareChoices: ["हाँ, सहमति देता हूँ", "अभी नहीं"],
+      precheck: "भेजने से पहले 1 समस्या मिली:\n⚠ PAN पर नाम \"KAVYA SHRI K R\" है, बैंक में \"KAVYASHRI K R\"। इससे लोन रिजेक्ट हो सकता है।\n\nहल: मैं नाम-घोषणा पत्र जोड़ दूँगा।",
+      precheckChoices: ["ठीक करें और भेजें"],
+      finish: "✅ आवेदन भेज दिया। फ़ैसला लगभग 10 मिनट में।\nहर EMI से 3 दिन पहले याद दिलाऊँगा।"
+    },
+    insure: {
+      ask: "आप किसकी सुरक्षा करना चाहते हैं?",
+      choices: ["परिवार का स्वास्थ्य", "मेरी बाइक"],
+      understand: () => `₹5 लाख कवर वाले 2 फ़ैमिली प्लान:\n\nप्लान A — ₹9,800/साल\n• पुरानी बीमारी पर वेटिंग पीरियड: 3 साल\n• रूम किराया सीमा: कवर का 1%/दिन\n\nप्लान B — ₹11,200/साल\n• वेटिंग पीरियड: 1 साल\n• कोई रूम किराया सीमा नहीं\n\n⚠ ध्यान दें: पहले साल मैटरनिटी किसी में कवर नहीं।`,
+      share: "DigiLocker से आपकी जानकारी ले लूँ ताकि दोबारा न लिखना पड़े?",
+      shareChoices: ["हाँ, DigiLocker से लें", "अभी नहीं"],
+      precheck: "जाँच: आपके पिता को डायबिटीज़ है। अभी बताने से बाद में क्लेम रिजेक्ट नहीं होगा। मैंने फ़ॉर्म में जोड़ दिया है।",
+      precheckChoices: ["ठीक है, प्लान B लें"],
+      finish: "✅ पॉलिसी जारी हो गई। क्लेम के लिए बस \"क्लेम\" कहें, मैं हर कदम पर मदद करूँगा।"
+    },
+    pay: {
+      ask: "आप क्या करना चाहते हैं?",
+      choices: ["EMI AutoPay सेट करें", "मेरा पेमेंट फ़ेल हुआ"],
+      understand: c => c.includes("फ़ेल")
+        ? "27 अक्टूबर को शर्मा स्टोर्स को ₹1,250 का UPI पेमेंट फ़ेल हुआ। पैसा कटा पर पहुँचा नहीं।\nबैंक को T+1 दिन में लौटाना होता है। 2 दिन हो गए, शिकायत दर्ज कर सकते हैं।"
+        : "AutoPay हर महीने 5 तारीख को ₹4,540 EMI काटेगा। कभी भी रोक या रद्द कर सकते हैं।",
+      share: "अगली स्क्रीन पर UPI PIN से पुष्टि करें (सिमुलेशन)।",
+      shareChoices: ["पुष्टि करें"],
+      precheck: "जाँच: 5 तारीख के आसपास आपका बैलेंस अक्सर कम रहता है। सैलरी के बाद 7 तारीख कर दें?",
+      precheckChoices: ["हाँ, 7 तारीख", "5 ही रखें"],
+      finish: "✅ हो गया। हर कटौती से 2 दिन पहले याद दिलाऊँगा।"
+    },
+    glossary: {
+      apr: "APR लोन की कुल सालाना लागत है, ब्याज और फ़ीस मिलाकर। सिर्फ़ ब्याज नहीं, APR की तुलना करें।",
+      kfs: "KFS एक पेज का सारांश है जो हर लेंडर को देना होता है: दर, फ़ीस, EMI, जुर्माना।",
+      emi: "EMI वह तय रकम है जो लोन चुकने तक हर महीने भरते हैं।",
+      "waiting period": "वेटिंग पीरियड पॉलिसी लेने के बाद का वह समय है जिसमें कुछ बीमारियाँ कवर नहीं होतीं।",
+      exclusion: "एक्सक्लूज़न वह है जिसके लिए पॉलिसी कभी पैसा नहीं देगी।"
+    },
+    fallback: "मैं प्रोटोटाइप हूँ — APR, KFS, EMI, waiting period, exclusion समझा सकता हूँ। या ऊपर सफ़र चुनें।",
+    notNow: "कोई बात नहीं। आपकी प्रगति सेव है — कभी भी लौटें।",
+    listen: "🔊 सुनें"
+  }
+};
+
+const chat = document.getElementById("chat");
+const langSel = document.getElementById("lang");
+let lang = "en", journey = null, step = 0, picked = "";
+
+const t = () => T[lang];
+
+function renderSteps() {
+  document.getElementById("steps").innerHTML =
+    STEPS.map((s, i) => `<span class="${journey && i <= step ? "on" : ""}">${s}</span>`).join("");
+  document.querySelectorAll(".journeys button").forEach(b => b.classList.toggle("active", b.dataset.j === journey));
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/[•⚠✅]/g, ""));
+  u.lang = lang === "hi" ? "hi-IN" : "en-IN";
+  speechSynthesis.speak(u);
+}
+
+function say(text, cls = "") {
+  const d = document.createElement("div");
+  d.className = `msg bot ${cls}`;
+  d.textContent = text;
+  const s = document.createElement("button");
+  s.className = "speak";
+  s.textContent = t().listen;
+  s.onclick = () => speak(text);
+  d.appendChild(document.createElement("br"));
+  d.appendChild(s);
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function userSay(text) {
+  const d = document.createElement("div");
+  d.className = "msg user";
+  d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function chips(options, onPick) {
+  const wrap = document.createElement("div");
+  wrap.className = "chips";
+  options.forEach(o => {
+    const b = document.createElement("button");
+    b.textContent = o;
+    b.onclick = () => { wrap.remove(); userSay(o); setTimeout(() => onPick(o), 350); };
+    wrap.appendChild(b);
+  });
+  chat.appendChild(wrap);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function startJourney(j) {
+  journey = j; step = 0; renderSteps();
+  const J = t()[j];
+  say(J.ask);
+  chips(J.choices, choice => {
+    picked = choice; step = 1; renderSteps();
+    say(J.understand(choice));
+    step = 2; renderSteps();
+    say(J.share);
+    chips(J.shareChoices, ans => {
+      if (ans === J.shareChoices[1] && J.shareChoices.length > 1 && j !== "pay") return say(t().notNow);
+      step = 3; renderSteps();
+      say(J.precheck, "warn");
+      chips(J.precheckChoices, () => {
+        step = 4; renderSteps();
+        say(J.finish, "ok");
+      });
+    });
+  });
+}
+
+function answer(q) {
+  const lower = q.toLowerCase();
+  const g = t().glossary;
+  const key = Object.keys(g).find(k => lower.includes(k));
+  if (key) return say(g[key]);
+  if (/loan|लोन/.test(lower)) return startJourney("lend");
+  if (/insur|policy|claim|बीमा|क्लेम/.test(lower)) return startJourney("insure");
+  if (/pay|emi|upi|पेमेंट/.test(lower)) return startJourney("pay");
+  say(t().fallback);
+}
+
+document.querySelectorAll(".journeys button").forEach(b => b.onclick = () => startJourney(b.dataset.j));
+
+document.getElementById("form").onsubmit = e => {
+  e.preventDefault();
+  const input = document.getElementById("input");
+  const q = input.value.trim();
+  if (!q) return;
+  userSay(q); input.value = "";
+  setTimeout(() => answer(q), 300);
+};
+
+langSel.onchange = () => {
+  lang = langSel.value; journey = null; step = 0;
+  chat.innerHTML = ""; renderSteps(); say(t().hello);
+};
+
+// Voice input via the browser's speech recognition (stand-in for Bhashini).
+const mic = document.getElementById("mic");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) mic.style.display = "none";
+mic.onclick = () => {
+  const r = new SR();
+  r.lang = lang === "hi" ? "hi-IN" : "en-IN";
+  mic.classList.add("listening");
+  r.onresult = ev => { const q = ev.results[0][0].transcript; userSay(q); answer(q); };
+  r.onend = () => mic.classList.remove("listening");
+  r.start();
+};
+
+renderSteps();
+say(t().hello);
+</script>
+</body>
+</html>
